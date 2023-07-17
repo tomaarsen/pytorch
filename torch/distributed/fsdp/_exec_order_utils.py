@@ -102,7 +102,7 @@ class _ExecOrderData:
         keys to prefetch, then this returns an empty :class:`list`.
         """
         current_index = self.handles_to_post_forward_order_index.get(
-            current_handles_key, None
+            current_handle, None
         )
         if current_index is None:
             return None
@@ -150,11 +150,11 @@ class _ExecOrderData:
             return
         handles_key = handle
         # Only record the first usage of a handles key
-        if handles_key in self.handles_to_post_forward_order_index:
+        if handle in self.handles_to_post_forward_order_index:
             return
         index = len(self.handles_post_forward_order)
-        self.handles_to_post_forward_order_index[handles_key] = index
-        self.handles_post_forward_order.append(handles_key)
+        self.handles_to_post_forward_order_index[handle] = index
+        self.handles_post_forward_order.append(handle)
 
     def record_pre_forward(self, handle: FlatParamHandle, is_training: bool) -> None:
         """
@@ -276,19 +276,17 @@ class _ExecOrderData:
                     "forward but trying to all-gather parameters for "
                 )
             else:
-                expected_handles_key = self.handles_pre_forward_order[
+                expected_handle = self.handles_pre_forward_order[
                     self.current_order_index
                 ]
-                if expected_handles_key != handles_key:
-                    expected_param_names = self._get_names_from_handles(
-                        expected_handles_key
-                    )
+                if expected_handle != handle:
+                    expected_param_names = self._get_names_from_handles(expected_handle)
                     msg_prefix = (
                         f"Expected to all-gather for {expected_param_names} "
                         "but trying to all-gather parameters for "
                     )
             if msg_prefix is not None:
-                param_names = self._get_names_from_handles(handles_key)
+                param_names = self._get_names_from_handles(handle)
                 msg_suffix = (
                     f"{param_names}"
                     if param_names
@@ -308,7 +306,7 @@ class _ExecOrderData:
     ) -> Tuple[Optional[int], ...]:
         """
         Returns the handle indices (i.e. indices into ``self.all_handles``)
-        corresponding to the handles in ``handles_key``. An entry in the
+        corresponding to the handles in ``handle``. An entry in the
         returned tuple is ``None`` if the handle is invalid.
         """
         indices: List[Optional[int]] = []

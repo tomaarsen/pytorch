@@ -347,7 +347,7 @@ def _unshard(
     """
     if not handle:
         return
-    any_ran_pre_unshard = False
+    ran_pre_unshard = False
     with state._device_handle.stream(pre_unshard_stream):
         if handle:
             ran_pre_unshard = handle.pre_unshard()
@@ -441,7 +441,7 @@ def _pre_forward(
         # Register post-backward hooks to reshard the parameters and reduce-scatter
         # their gradients. They must be re-registered every forward pass in case
         # the `grad_fn` is mutated.
-        _register_post_backward_hooks(state, handles)
+        _register_post_backward_hook(state, handle)
         # We have to reallocate the _cpu_grad if optimizer overlap
         # set the grad to None in the backward pass.
         for handle in handles:
@@ -472,11 +472,11 @@ def _pre_forward_unshard(
         return
     # If the handles have been prefetched, then there is no need to call
     # `_unshard()` again
-    if not state._handles_prefetched.get(handles_key, False):
-        _unshard(state, handles, state._unshard_stream, state._pre_unshard_stream)
-    state._needs_pre_forward_unshard[handles_key] = False
+    if not state._handles_prefetched.get(handle, False):
+        _unshard(state, handle, state._unshard_stream, state._pre_unshard_stream)
+    state._needs_pre_forward_unshard[handle] = False
     state._device_handle.current_stream().wait_stream(state._unshard_stream)
-    _prefetch_handles(state, handles_key, _PrefetchMode.FORWARD)
+    _prefetch_handle(state, handle, _PrefetchMode.FORWARD)
 
 
 @no_type_check
@@ -574,10 +574,12 @@ def _root_pre_forward(
 
         # We cast buffers back to full precision if we're forcing full precision. Disjointly, we check if buffers
         # are in full precision and if we should cast them back to lower precision, which happens when
-        # exiting eval() mode and full precision in eval was configured.
-        should_cast_buffers_to_full_prec = any(
-            handle._force_full_precision for handle in state._handles
-        )
+        # exiting eval() mode.
+        handle = state._handle
+        if handle:
+            should_cast_buffers_to_full_prec = handle._force_full_precision
+        else:
+            should_cast_buffers_to_full_prec = True
 
         if should_cast_buffers_to_full_prec:
             _cast_buffers_to_dtype_and_device(
@@ -611,7 +613,7 @@ def _root_pre_forward(
             state._needs_buffer_dtype_restore_check = False
 
         if state.forward_prefetch:
-            handles_keys = []
+            handles = []
             for fsdp_state in state._all_fsdp_states:
                 # TODO: Forward prefetch assumes singleton handles key. For the
                 # composable path, `_handle` may have more than one handle,
@@ -650,8 +652,7 @@ def _root_cast_forward_input(
         handle_full_precision = False
 
     should_cast_forward_inputs = (
-        (module.training or not state._use_full_prec_in_eval)
-        and all(not handle._force_full_precision for handle in state._handles)
+        (module.training or not state._use_full_prec_in_eval) and force_full_precision
     ) and state.mixed_precision.cast_root_forward_inputs
 
     if should_cast_forward_inputs:
@@ -706,7 +707,7 @@ def _pre_backward_hook(
             if not handle.prefetched:
                 _unshard(
                     state,
-                    _handles,
+                    handle,
                     state._unshard_stream,
                     state._pre_unshard_stream,
                 )
@@ -1090,33 +1091,33 @@ def _finalize_params(
     state: _FSDPState,
 ) -> None:
     """Finalizes the parameters before the next iteration."""
-    for handle in state._handles:
-        flat_param = handle.flat_param
-        if hasattr(flat_param, "_post_backward_hook_state"):
-            post_backward_hook_state_len = len(flat_param._post_backward_hook_state)
-            expected_post_backward_hook_state_len = int(flat_param.requires_grad) + 1
-            _p_assert(
-                post_backward_hook_state_len == expected_post_backward_hook_state_len,
-                f"Invalid: ``_post_backward_hook_state``: {flat_param._post_backward_hook_state}",
-            )
-            flat_param._post_backward_hook_state[-1].remove()
-            delattr(flat_param, "_post_backward_hook_state")
-        if flat_param.requires_grad:
-            if not state._sync_gradients:
-                # Preserve the gradient accumulation state if not synchronizing
-                # gradients: `.grad` remains the unsharded gradient  from prior
-                # `no_sync()` iterations, and `_saved_grad_shard` remains the
-                # sharded gradient from the last synchronized iteration
-                continue
-            # Skip call to prepare_gradient_for_optim if we've already run the
-            # optimizer in backward pass.
-            if not handle._has_optim_in_backward:
-                handle.prepare_gradient_for_optim()
-            _p_assert(
-                hasattr(flat_param, "_post_backward_called"),
-                "Expects `_post_backward_called` to be set on the `FlatParameter`",
-            )
-            flat_param._post_backward_called = False
+    handle = state._handle
+    if not handle:
+        return
+    flat_param = handle.flat_param
+    if hasattr(flat_param, "_post_backward_hook_state"):
+        post_backward_hook_state_len = len(flat_param._post_backward_hook_state)
+        expected_post_backward_hook_state_len = int(flat_param.requires_grad) + 1
+        _p_assert(
+            post_backward_hook_state_len == expected_post_backward_hook_state_len,
+            f"Invalid: ``_post_backward_hook_state``: {flat_param._post_backward_hook_state}",
+        )
+        flat_param._post_backward_hook_state[-1].remove()
+        delattr(flat_param, "_post_backward_hook_state")
+    if flat_param.requires_grad:
+        if not state._sync_gradients:
+            # Preserve the gradient accumulation state if not synchronizing
+            # gradients: `.grad` remains the unsharded gradient  from prior
+            # `no_sync()` iterations, and `_saved_grad_shard` remains the
+            # sharded gradient from the last synchronized iteration
+            return
+        if not handle._has_optim_in_backward:
+            handle.prepare_gradient_for_optim()
+        _p_assert(
+            hasattr(flat_param, "_post_backward_called"),
+            "Expects `_post_backward_called` to be set on the `FlatParameter`",
+        )
+        flat_param._post_backward_called = False
 
 
 @no_type_check
@@ -1129,29 +1130,25 @@ def _prefetch_handle(
     Prefetches the next handles if needed (without synchronization). An empty
     handles key cannot prefetch.
     """
-    if not current_handles_key:
+    if not current_handle:
         return
-    handles_to_prefetch = _get_handles_to_prefetch(state, current_handles_key)
-    for handles_key in handles_to_prefetch:
-        # Temporarily emulate the training state while calling `_unshard` to
-        # ensure the correct `as_params` for `_use_unsharded_views()`
-        prev_training_states: List[HandleTrainingState] = []
-        for handle in handles_key:
-            prev_training_states.append(handle._training_state)
-            if prefetch_mode == _PrefetchMode.BACKWARD:
-                handle._training_state = HandleTrainingState.BACKWARD_PRE
-            elif prefetch_mode == _PrefetchMode.FORWARD:
-                handle._training_state = HandleTrainingState.FORWARD
-            else:
-                raise ValueError(
-                    f"Invalid prefetch mode on rank {state.rank}: {prefetch_mode}"
-                )
-        # Prefetch the next set of handles without synchronizing to allow
-        # the sync to happen as late as possible to maximize overlap
-        _unshard(state, handles_key, state._unshard_stream, state._pre_unshard_stream)
-        for handle, prev_training_state in zip(handles_key, prev_training_states):
-            handle._training_state = prev_training_state
-        state._handles_prefetched[handles_key] = True
+    handle = _get_handle_to_prefetch(state, current_handle)
+    if not handle:
+        return
+    # Temporarily emulate the training state while calling `_unshard` to
+    # ensure the correct `as_params` for `_use_unsharded_views()`
+    prev_training_state = handle._training_state
+    if prefetch_mode == _PrefetchMode.BACKWARD:
+        handle._training_state = HandleTrainingState.BACKWARD_PRE
+    elif prefetch_mode == _PrefetchMode.FORWARD:
+        handle._training_state = HandleTrainingState.FORWARD
+    else:
+        raise ValueError(f"Invalid prefetch mode on rank {state.rank}: {prefetch_mode}")
+    # Prefetch the next set of handles without synchronizing to allow
+    # the sync to happen as late as possible to maximize overlap
+    _unshard(state, handle, state._unshard_stream, state._pre_unshard_stream)
+    handle._training_state = prev_training_state
+    state._handles_prefetched[handle] = True
 
 
 @no_type_check
@@ -1161,13 +1158,13 @@ def _get_handle_to_prefetch(
 ) -> FlatParamHandle:
     """
     Returns a :class:`list` of the handles keys to prefetch for the next
-    module(s), where ``current_handles_key`` represents the current module.
+    module(s), where ``current_handle`` represents the current module.
 
     "Prefetching" refers to running the unshard logic early (without
     synchronization), and the "next" modules depend on the recorded execution
     order and the current training state.
     """
-    training_state = _get_training_state(current_handles_key)
+    training_state = _get_training_state(current_handle)
     valid_training_states = (
         HandleTrainingState.BACKWARD_PRE,
         HandleTrainingState.BACKWARD_POST,
@@ -1231,13 +1228,10 @@ def _register_pre_forward_hook(
     for forward_handle in state._pre_forward_handles:
         forward_handle.remove()
     state._pre_forward_handles.clear()
-    module_param_handles = state._fully_sharded_module_to_handles.get(module, [])
-    unshard_fn = functools.partial(
-        _pre_forward_unshard,
-        state,
-        module_param_handles,
+    module_param_handle = state._fully_sharded_module_to_handle.get(module, None)
+    hook = functools.partial(
+        _pre_forward, state, module_param_handle, _pre_forward_unshard
     )
-    hook = functools.partial(_pre_forward, state, module_param_handles, unshard_fn)
     state._pre_forward_handles.append(
         module.register_forward_pre_hook(hook, prepend=True, with_kwargs=True)
     )
@@ -1256,17 +1250,12 @@ def _register_post_forward_hook(
     for forward_handle in state._post_forward_handles:
         forward_handle.remove()
     state._post_forward_handles.clear()
-    module_param_handles = state._fully_sharded_module_to_handles.get(module, [])
-    reshard_fn = functools.partial(
-        _post_forward_reshard,
-        state,
-        module_param_handles,
-    )
+    module_param_handle = state._fully_sharded_module_to_handle.get(module, None)
     hook = functools.partial(
         _post_forward,
         state,
-        module_param_handles,
-        reshard_fn,
+        module_param_handle,
+        _post_forward_reshard,
     )
     state._post_forward_handles.append(module.register_forward_hook(hook))
 
@@ -1341,7 +1330,7 @@ def _register_pre_backward_hooks(
     return _apply_to_tensors(_register_hook, outputs)
 
 
-def _register_post_backward_hooks(
+def _register_post_backward_hook(
     state: _FSDPState,
     handle: FlatParamHandle,
 ) -> None:
@@ -1388,7 +1377,7 @@ def _register_post_backward_hooks(
     flat_param._post_backward_hook_state = (acc_grad, hook_handle)  # type: ignore[attr-defined]
 
 
-def _register_post_backward_reshard_only_hooks(
+def _register_post_backward_reshard_only_hook(
     state: _FSDPState,
     handle: FlatParamHandle,
     args: Tuple[Any, ...],
@@ -1405,22 +1394,23 @@ def _register_post_backward_reshard_only_hooks(
     if not handle:
         return
     inp_tensors: Optional[List[torch.Tensor]] = None
-    for handle in handles:
-        if handle.flat_param.requires_grad:
-            continue
-        if inp_tensors is None:
-            args_list, _ = tree_flatten(args)
-            kwargs_list, _ = tree_flatten(kwargs)
-            inp_tensors = [
-                obj
-                for obj in chain(args_list, kwargs_list)
-                if torch.is_tensor(obj) and obj.requires_grad
-            ]
-        assert inp_tensors is not None  # mypy
-        hook_handle = register_multi_grad_hook(
-            inp_tensors, functools.partial(_post_backward_reshard, state, handle)
-        )
-        handle.flat_param._post_backward_hook_state = (hook_handle,)  # type: ignore[attr-defined, assignment]
+    if not handle:
+        return
+    if handle.flat_param.requires_grad:
+        return
+    if inp_tensors is None:
+        args_list, _ = tree_flatten(args)
+        kwargs_list, _ = tree_flatten(kwargs)
+        inp_tensors = [
+            obj
+            for obj in chain(args_list, kwargs_list)
+            if torch.is_tensor(obj) and obj.requires_grad
+        ]
+    assert inp_tensors is not None  # mypy
+    hook_handle = register_multi_grad_hook(
+        inp_tensors, functools.partial(_post_backward_reshard, state, handle)
+    )
+    handle.flat_param._post_backward_hook_state = (hook_handle,)  # type: ignore[attr-defined]
 
 
 @no_type_check
@@ -1470,6 +1460,8 @@ def _reset_flat_param_grad_info_if_needed(
     overhead is minimal, so we may call it throughout FSDP methods, which serve
     as callsites to free the gradient memory earlier.
     """
+    if not isinstance(handles, list):
+        handles = [handles]
     for handle in handles:
         if handle._use_orig_params:
             handle._reset_flat_param_grad_info_if_needed()
