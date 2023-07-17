@@ -1,4 +1,3 @@
-import itertools
 import warnings
 from enum import auto, Enum
 from typing import Dict, List, Optional, Tuple, Union

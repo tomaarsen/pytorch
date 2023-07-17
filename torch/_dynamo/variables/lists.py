@@ -541,7 +541,9 @@ class SizeVariable(TupleVariable):
             out = self.get_item_dyn(tx, args[0])
             return out
         if name == "numel":
-            return ConstantVariable(torch.Size([item.value for item in self.items]).numel())
+            return ConstantVariable(
+                torch.Size([item.value for item in self.items]).numel()
+            )
         return super().call_method(tx, name, args, kwargs)
 
     def get_item_dyn(self, tx, arg: VariableTracker):

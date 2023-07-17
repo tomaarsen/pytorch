@@ -2,7 +2,7 @@ import functools
 import inspect
 import warnings
 from functools import partial
-from typing import Any, Deque, Dict, List, NamedTuple, Set, Tuple, Type
+from typing import Any, Callable, Dict, Set, Type, Union
 
 import torch.nn as nn
 from torch.distributed.fsdp._common_utils import _get_module_fsdp_state
@@ -37,16 +37,16 @@ def _auto_wrap(
     ``module``. This function accepts the kwargs dict directly since it gets
     forwarded into the post-order traversal function.
     """
-    root_module = auto_wrap_kwargs["module"]
-    auto_wrap_policy = auto_wrap_kwargs["auto_wrap_policy"]
-    ignored_modules = auto_wrap_kwargs["ignored_modules"]
     mixed_precision = fsdp_kwargs["mixed_precision"]
-    _check_nested_wrapping(root_module, module_wrapper_cls)
+    is_wrapper = inspect.isclass(fsdp_fn)
+    # TODO: We may relax this no-nested-wrapping constraint to support manual
+    # wrapping followed by auto wrapping.
+    _check_nested_wrapping(root_module)
 
     # TODO: Start migration to refactored auto wrapping with `ModuleWrapPolicy`
-    if isinstance(auto_wrap_policy, ModuleWrapPolicy):
-        module_classes = auto_wrap_policy._module_classes
-        fsdp_kwargs["auto_wrap_policy"] = None
+    if isinstance(policy, ModuleWrapPolicy):
+        module_classes = policy._module_classes
+        fsdp_kwargs["auto_wrap_policy" if is_wrapper else "policy"] = None
         target_module_to_kwargs = _run_module_wrap_policy(
             root_module, module_classes, ignored_modules, fsdp_kwargs
         )
@@ -96,7 +96,7 @@ def _auto_wrap(
         )
         recursive_wrap_kwargs["auto_wrap_policy"] = policy
         _warn_on_overridden_mixed_precision(overridden_module_classes)
-    _recursive_wrap(**recursive_wrap_kwargs, **fsdp_kwargs)
+    _recursive_wrap(**recursive_wrap_kwargs, **fsdp_kwargs)  # type: ignore[arg-type]
 
 
 def _check_nested_wrapping(root_module: nn.Module):

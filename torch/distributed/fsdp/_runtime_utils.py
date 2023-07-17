@@ -1190,7 +1190,10 @@ def _get_handle_to_prefetch(
         target_handles_key_candidate = eod.get_handle_to_backward_prefetch(
             current_handles_key
         )
-        if target_handles_key_candidate._needs_pre_backward_unshard and not target_handles_key_candidate.prefetched:
+        if (
+            target_handles_key_candidate._needs_pre_backward_unshard
+            and not target_handles_key_candidate.prefetched
+        ):
             target_handles_key = target_handles_key_candidate
         else:
             target_handles_key = None
@@ -1198,7 +1201,10 @@ def _get_handle_to_prefetch(
         target_handles_key_candidate = eod.get_handle_to_forward_prefetch(
             current_handles_key
         )
-        if target_handles_key_candidate._needs_pre_forward_unshard and not target_handles_key_candidate.prefetched:
+        if (
+            target_handles_key_candidate._needs_pre_forward_unshard
+            and not target_handles_key_candidate.prefetched
+        ):
             target_handles_key = target_handles_key_candidate
         else:
             target_handles_key = None

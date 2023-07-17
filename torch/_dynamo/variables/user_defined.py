@@ -184,8 +184,11 @@ class UserDefinedObjectVariable(UserDefinedVariable):
         self.value = value
         self.value_type = value_type or type(value)
         # if isinstance(self.value, (types.FunctionType, types.MethodType)):
-            # raise RuntimeError(f"Trying to make a UDO func {self.value}")
-        if getattr(self.value, '_is_fsdp_managed_module', False) and type(self) == UserDefinedObjectVariable:
+        # raise RuntimeError(f"Trying to make a UDO func {self.value}")
+        if (
+            getattr(self.value, "_is_fsdp_managed_module", False)
+            and type(self) == UserDefinedObjectVariable
+        ):
             raise RuntimeError(f"Cant make fsdp module as UDO {type(self)}")
         assert type(value) is self.value_type
 
@@ -204,8 +207,13 @@ class UserDefinedObjectVariable(UserDefinedVariable):
         return self.value_type
 
     def reconstruct(self, codegen):
-        if isinstance(self.value, torch.distributed.fsdp.fully_sharded_data_parallel.FullyShardedDataParallel):
-            raise RuntimeError(f"Attempted reconstruct? {self.value}, {type(self.value)} {getattr(self.value, '_is_fsdp_managed_module', False)}")
+        if isinstance(
+            self.value,
+            torch.distributed.fsdp.fully_sharded_data_parallel.FullyShardedDataParallel,
+        ):
+            raise RuntimeError(
+                f"Attempted reconstruct? {self.value}, {type(self.value)} {getattr(self.value, '_is_fsdp_managed_module', False)}"
+            )
         return super().reconstruct(codegen)
 
     @staticmethod
@@ -449,7 +457,15 @@ class UserDefinedObjectVariable(UserDefinedVariable):
             )
         elif isinstance(subobj, types.FunctionType) or (
             isinstance(subobj, types.MethodType)
-            and (isinstance(self.value, torch.nn.Module) or isinstance(self.value, torch.distributed.fsdp.flat_param.FlatParamHandle))
+            and (
+                isinstance(
+                    self.value,
+                    (
+                        torch.nn.Module,
+                        torch.distributed.fsdp.flat_param.FlatParamHandle,
+                    ),
+                )
+            )
         ):
             if isinstance(subobj, types.MethodType):
                 func = subobj.__func__
@@ -476,7 +492,7 @@ class UserDefinedObjectVariable(UserDefinedVariable):
         #     isinstance(subobj, types.MethodType)
         #     and isinstance(self.value, torch.distributed.fsdp.flat_param.FlatParamHandle)
         # ):
-            # print("Gettattr driven via subobj?", type(self.value), subobj, type(subobj))
+        # print("Gettattr driven via subobj?", type(self.value), subobj, type(subobj))
         if (
             name in getattr(value, "__dict__", {})
             or ConstantVariable.is_literal(subobj)

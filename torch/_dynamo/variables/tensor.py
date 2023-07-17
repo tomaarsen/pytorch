@@ -7,11 +7,8 @@ import sympy
 
 import torch.fx
 import torch.random
-<<<<<<< HEAD
 from torch._dynamo.variables.base import VariableTracker
-=======
 
->>>>>>> 94b3f9f646a84fb7bb0df997a57d410697440210
 from torch.fx.experimental.symbolic_shapes import free_symbols, guard_scalar, SymTypes
 
 from .. import config, variables
@@ -134,12 +131,12 @@ class TensorVariable(VariableTracker):
 
     def call_hasattr(self, tx, name: str) -> "VariableTracker":
         options = VariableTracker.propagate(self)
-        val = self.as_proxy().node.meta['example_value']
+        val = self.as_proxy().node.meta["example_value"]
         result = hasattr(val, name)
         return variables.ConstantVariable(result, **options).add_guard(
-            AttrSource(self.source, name).make_guard(
-                GuardBuilder.HASATTR
-            ))
+            AttrSource(self.source, name).make_guard(GuardBuilder.HASATTR)
+        )
+
     @staticmethod
     def specialize(value: torch.Tensor):
         props = {
@@ -536,7 +533,9 @@ class TensorVariable(VariableTracker):
                 **options,
             )
         elif name == "tolist":
-            unimplemented(f"TOLIST with {self.as_proxy().node.meta['example_value'].tolist()} {args} {kwargs}")
+            unimplemented(
+                f"TOLIST with {self.as_proxy().node.meta['example_value'].tolist()} {args} {kwargs}"
+            )
         elif name in ("backward", "data_ptr"):
             unimplemented(f"Tensor.{name}")
         elif name == "item" and not config.capture_scalar_outputs:
@@ -1004,7 +1003,6 @@ class FakeItemVariable(TensorVariable):
         return FakeItemVariable(**dict(tensor_variable.__dict__))
 
 
-<<<<<<< HEAD
 class TypedStorageVariable(VariableTracker):
     def __init__(self, value, **kwargs):
         self.value = value
@@ -1048,7 +1046,8 @@ class TypedStorageVariable(VariableTracker):
             return ConstantVariable(None)
         print("TypedStorageVariable Call method", name, self.value, args)
         unimplemented(f"typed_storage method calls WIP {name}")
-=======
+
+
 class TensorSubclassVariable(VariableTracker):
     def __init__(self, value, *args, **kwargs):
         self.value = value
@@ -1067,4 +1066,3 @@ class TensorSubclassVariable(VariableTracker):
             )
 
         return super().call_function(tx, args, kwargs)
->>>>>>> 94b3f9f646a84fb7bb0df997a57d410697440210

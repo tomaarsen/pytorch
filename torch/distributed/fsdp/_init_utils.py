@@ -48,7 +48,6 @@ from torch.distributed.fsdp.api import (
 )
 from torch.distributed.fsdp.flat_param import (
     _FSDP_USE_FULL_PREC_IN_EVAL,
-    _HandlesKey,
     FlatParameter,
     FlatParamHandle,
     FlatParamHandle,

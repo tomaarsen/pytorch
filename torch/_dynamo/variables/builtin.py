@@ -1095,11 +1095,12 @@ class BuiltinVariable(VariableTracker):
                 unimplemented(f"tensor grad with source {source}")
             else:
                 from .builder import wrap_fx_proxy
+
                 grad_proxy = obj.as_proxy().grad
                 return wrap_fx_proxy(
                     tx=tx,
                     proxy=grad_proxy,
-                    example_value=obj.as_proxy().node.meta['example_value'].grad,
+                    example_value=obj.as_proxy().node.meta["example_value"].grad,
                     **options,
                 )
                 # unimplemented("tensor grad without source")
@@ -1167,13 +1168,13 @@ class BuiltinVariable(VariableTracker):
             #         print("DELETED FROM FSDP", name_var.value)
             #     else:
             #         print("SETTING ON FSDP", name_var.value)
-                # return val
-                # unimplemented("NYI - delattr on FSDP")
-            
+            # return val
+            # unimplemented("NYI - delattr on FSDP")
 
             tx.output.side_effects.store_attr(obj, name_var.as_python_constant(), val)
             if isinstance(obj, variables.TensorVariable):
-                from .builder import wrap_fx_proxy, VariableBuilder, wrap_to_fake_tensor_and_record
+                from .builder import wrap_fx_proxy
+
                 if name_var.value == "data":
                     to_remove = []
                     for tf in tx.output.tracked_fakes:
@@ -1181,14 +1182,17 @@ class BuiltinVariable(VariableTracker):
                             to_remove.append(tf)
                     for tf in to_remove:
                         tx.output.tracked_fakes.remove(tf)
-                    
+
                     out = wrap_fx_proxy(
                         tx,
                         tx.output.create_proxy(
-                            "call_function", torch._set_data, *proxy_args_kwargs([obj, val], {}))
-                        )
+                            "call_function",
+                            torch._set_data,
+                            *proxy_args_kwargs([obj, val], {}),
+                        ),
+                    )
                     tx.replace_all(obj, out)
-            
+
             return val.add_options(self, obj, name_var)
         elif isinstance(obj, variables.UserDefinedObjectVariable):
             unimplemented(
@@ -1314,11 +1318,11 @@ class BuiltinVariable(VariableTracker):
             UserFunctionVariable,
         )
         from .lists import SizeVariable
+        from .nn_module import FSDPManagedNNModuleVariable
         from .tensor import (
             supported_const_comparison_ops,
             supported_tensor_comparison_ops,
         )
-        from .nn_module import FSDPManagedNNModuleVariable
 
         op = self.fn
 
@@ -1341,20 +1345,22 @@ class BuiltinVariable(VariableTracker):
 
         if (
             all(
-                isinstance(x, (NNModuleVariable, ConstantVariable, FSDPManagedNNModuleVariable))
+                isinstance(
+                    x, (NNModuleVariable, ConstantVariable, FSDPManagedNNModuleVariable)
+                )
                 for x in [left, right]
             )
             and op in supported_const_comparison_ops.values()
         ):
+
             def _get(element):
                 if isinstance(element, NNModuleVariable):
-                    return tx.output.get_submodule(element.module_key)    
+                    return tx.output.get_submodule(element.module_key)
                 if isinstance(element, FSDPManagedNNModuleVariable):
                     return element.value
                 else:
                     return element.as_python_constant()
 
-            
             left = _get(left)
             right = _get(right)
             return ConstantVariable(op(left, right))
@@ -1390,9 +1396,9 @@ class BuiltinVariable(VariableTracker):
             return BaseListVariable.list_compare(tx, op, left, right)
 
         if isinstance(left, SetVariable):
-            if isinstance(right, ConstantVariable) and right.value == None:
-                return ConstantVariable(op(left._underlying_items, right.value))   
-             
+            if isinstance(right, ConstantVariable) and right.value is None:
+                return ConstantVariable(op(left._underlying_items, right.value))
+
             if not type(left) == type(right):  # Mismatch in BaseListVariable subclasses
                 _unimplemented()
             return ConstantVariable(op(left._underlying_items, right._underlying_items))
@@ -1420,12 +1426,15 @@ class BuiltinVariable(VariableTracker):
         if isinstance(left, ConstantVariable) and isinstance(right, ConstantVariable):
             return ConstantVariable(op(left.value, right.value))
 
-
-        # Would this invoke user code?        
-        if isinstance(left, variables.UserDefinedObjectVariable) and isinstance(right, variables.UserDefinedObjectVariable):
+        # Would this invoke user code?
+        if isinstance(left, variables.UserDefinedObjectVariable) and isinstance(
+            right, variables.UserDefinedObjectVariable
+        ):
             return ConstantVariable(op(left.value, right.value))
 
-        if isinstance(left, variables.UserDefinedObjectVariable) and isinstance(right, variables.ConstantVariable):
+        if isinstance(left, variables.UserDefinedObjectVariable) and isinstance(
+            right, variables.ConstantVariable
+        ):
             return ConstantVariable(op(left.value, right.value))
         if isinstance(left, UserDefinedObjectVariable) and isinstance(
             right, UserDefinedObjectVariable
