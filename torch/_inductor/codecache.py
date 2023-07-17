@@ -813,7 +813,9 @@ class AotCodeCache:
                     os.makedirs(output_so_dir, exist_ok=False)
                 so_name = f"{config.dll_name}.so"
                 output_so = os.path.join(output_so_dir, so_name)
-                if not os.path.exists(output_so):
+                if os.path.exists(output_so):
+                    log.info("aot_inductor dynamic library already exist: %s", output_so)
+                else:
                     cmd = cpp_compile_command(
                         input=input_path,
                         output=output_so,
@@ -821,7 +823,7 @@ class AotCodeCache:
                         cuda=cuda,
                         aot_mode=graph.aot_mode,
                     ).split(" ")
-                    log.debug("aot compilation command: %s", " ".join(cmd))
+                    log.info("aot compilation command: %s", " ".join(cmd))
                     try:
                         subprocess.check_call(cmd)
                     except subprocess.CalledProcessError as e:
