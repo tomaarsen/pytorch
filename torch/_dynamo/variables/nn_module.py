@@ -678,6 +678,10 @@ class UnspecializedNNModuleVariable(UserDefinedObjectVariable):
             # force guard checks even when `not config.guard_nn_modules``
             self.source = NotNNModuleSource(self.source)
 
+
+    def as_python_constant(self):
+        unimplemented(f"as_python_constant on {self}")
+    
     @staticmethod
     @functools.lru_cache(None)
     def _nn_module_method_ids():

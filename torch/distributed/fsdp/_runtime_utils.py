@@ -444,11 +444,10 @@ def _pre_forward(
         _register_post_backward_hook(state, handle)
         # We have to reallocate the _cpu_grad if optimizer overlap
         # set the grad to None in the backward pass.
-        for handle in handles:
-            if handle._offload_params and handle.flat_param._cpu_grad is None:
-                handle.flat_param._cpu_grad = torch.zeros_like(
-                    handle.flat_param._local_shard, device=torch.device("cpu")
-                ).pin_memory()
+        if handle and handle._offload_params and handle.flat_param._cpu_grad is None:
+            handle.flat_param._cpu_grad = torch.zeros_like(
+                handle.flat_param._local_shard, device=torch.device("cpu")
+            ).pin_memory()
 
         should_cast_forward_inputs = (
             state._handle and not state._handle._force_full_precision
@@ -458,7 +457,7 @@ def _pre_forward(
             # Recursively convert args and kwargs to specified precision.
             input_dtype: Optional[torch.dtype] = state.mixed_precision.param_dtype
             args, kwargs = _cast_forward_inputs(input_dtype, *args, **kwargs)
-        _register_post_backward_reshard_only_hooks(state, handle, args, kwargs)
+        _register_post_backward_reshard_only_hook(state, handle, args, kwargs)
         return args, kwargs
 
 
@@ -652,7 +651,7 @@ def _root_cast_forward_input(
         handle_full_precision = False
 
     should_cast_forward_inputs = (
-        (module.training or not state._use_full_prec_in_eval) and force_full_precision
+        (module.training or not state._use_full_prec_in_eval) and handle_full_precision
     ) and state.mixed_precision.cast_root_forward_inputs
 
     if should_cast_forward_inputs:

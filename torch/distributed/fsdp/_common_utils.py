@@ -120,7 +120,7 @@ class _FSDPState(_State):
         self._all_fsdp_states: List[_FSDPState] = []
         self._all_handles: List[flat_param_file.FlatParamHandle] = []
         self._device_mesh: Optional[DeviceMesh] = None
-
+        self._handles_prefetched = []
 
 def _get_module_fsdp_state(module: nn.Module) -> Optional[_FSDPState]:
     state = _get_module_state(module)
