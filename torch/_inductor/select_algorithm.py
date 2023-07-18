@@ -26,7 +26,7 @@ from .codegen.triton import texpr, TritonKernel, TritonPrinter, TritonScheduling
 
 from .codegen.triton_utils import config_of, signature_of
 
-from .utils import do_bench, sympy_dot, sympy_product, sympy_subs
+from .utils import do_bench, is_size_var, sympy_dot, sympy_product, sympy_subs
 from .virtualized import V
 
 log = logging.getLogger(__name__)
@@ -200,7 +200,7 @@ class TritonTemplateKernel(TritonKernel):
             replacements = {
                 x: self.args.size(x)
                 for x in index_symbols + lengths
-                if x.name.startswith("s") or x.name.startswith("ps")
+                if isinstance(x, sympy.Symbol) and is_size_var(x.name)
             }
 
             # glue to make generated code use same indexing from template
@@ -470,7 +470,10 @@ class TritonTemplate:
             _, call_args, _ = kernel.args.python_argdefs()
 
         expected_args = [x.get_name() for x in input_nodes] + [fake_out.get_name()]
-        assert list(call_args)[:len(expected_args)] == expected_args, (call_args, expected_args)
+        assert list(call_args)[: len(expected_args)] == expected_args, (
+            call_args,
+            expected_args
+        )
         extra_args = V.graph.sizevars.size_hints(
             map(sympy.expand, call_args[len(expected_args) :])
         )
