@@ -4738,6 +4738,7 @@ class TestCompileTransforms(TestCase):
     # torch.compile is not supported on Windows
     # Triton only supports GPU with SM70 or later.
     @expectedFailureIf(IS_WINDOWS or (TEST_CUDA and not SM70OrLater))
+    @skipIfTorchDynamo("Not a suitable dynamo test")
     def test_compile_vmap_hessian(self, device):
         # The model and inputs are a smaller version
         # of code at benchmark repo:
