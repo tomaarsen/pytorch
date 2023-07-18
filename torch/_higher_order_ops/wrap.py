@@ -1,9 +1,13 @@
+import torch
 from torch._ops import HigherOrderOperator
 from torch.utils.checkpoint import checkpoint
 from itertools import count
 import inspect
 
 uid = count(1)
+
+def get_unique_graph_id():
+    return next(uid)
 
 # Used for testing the HigherOrderOperator mechanism
 class Wrap(HigherOrderOperator):
@@ -75,6 +79,7 @@ class TagActivationCheckpoint(HigherOrderOperator):
 
     def __init__(self):
         super().__init__("tag_activation_checkpoint")
+        self.context_fn_dynamo = None
 
     @staticmethod
     def divide_kwargs(kwargs):
@@ -110,19 +115,18 @@ class TagActivationCheckpoint(HigherOrderOperator):
         return checkpoint_kwargs, gmod_kwargs
 
     def tag_nodes(self, gmod):
-        # TODO - This needs major investigation. Currently, we are tagging all
-        # the forward nodes as recomputable. However, torch.utils.checkpoint
-        # provides a custom function to selectively recompute. We will have to
-        # figure out how to tag seletively.
-        unique_graph_id = next(uid)
-        for node in gmod.graph.nodes:
-            if node.op in ("call_function", "call_method", "call_module"):
-                node.meta["recompute"] = unique_graph_id
+        unique_graph_id = get_unique_graph_id()
+        if self.context_fn_dynamo:
+            self.context_fn_dynamo(unique_graph_id, gmod)
+        else:
+            for node in gmod.graph.nodes:
+                if node.op in ("call_function", "call_method", "call_module"):
+                    node.meta["recompute"] = unique_graph_id
         return gmod
 
     def __call__(self, gmod, *args, **kwargs):
         if "context_fn" in kwargs:
-            raise RuntimeError("Tagged Activation checkpointing does not support selective checkpointing yet.")
+            raise RuntimeError("Tagged Activation checkpointing does not support `context_fn` selective checkpointing, please use `context_fn_dynamo` following documentation.")
         import torch.fx.traceback as fx_traceback
         from torch.fx import Interpreter
         gmod = self.tag_nodes(gmod)

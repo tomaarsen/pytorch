@@ -311,6 +311,7 @@ def checkpoint(
     *args,
     use_reentrant: Optional[bool] = None,
     context_fn: Callable[[], Tuple[ContextManager, ContextManager]] = noop_context_fn,
+    context_fn_dynamo: Callable[["GraphModule"], None] = None,
     determinism_check: str = "default",
     debug: bool = False,
     **kwargs
@@ -405,6 +406,15 @@ def checkpoint(
             context managers. The function and its recomputation will be run
             under the first and second context managers respectively.
             This argument is only supported if ``use_reentrant=False``.
+        context_fn_dynamo(Callable, optional): A callable taking GraphModule as input
+            and walks through the graph nodes to decide whether to checkpoint a node
+            (i.e. saves its input and recomputes the node in backward pass).
+            If a node is marked as "recompute", it's guaranteed to be recomputed.
+            This argument is only supported if ``use_reentrant=False`` (TODO: confirm if we want this).
+            This argument is only supported if we are using `torch.compile()`.
+            Note that `torch.compile()` will make additional decision on whether
+            to recompute other ops (e.g. bandwidth-bound ops such as pointwise).
+            (TODO: give example of how to use `context_fn_dynamo`)
         determinism_check(str, optional): A string specifying the determinism
             check to perform. By default it is set to ``"default"`` which
             compares the shapes, dtypes, and devices of the recomputed tensors

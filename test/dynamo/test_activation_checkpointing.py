@@ -19,7 +19,10 @@ requires_cuda = functools.partial(unittest.skipIf, not HAS_CUDA, "requires cuda"
 
 
 def count_ops(gm, args, freq, op):
-    assert [node.target for node in gm.graph.nodes].count(op) == freq
+    actual_count = [node.target for node in gm.graph.nodes].count(op)
+    assert (
+        actual_count == freq
+    ), f"In graph {gm}, expected {op} to have occurred {freq} times in the graph, but got {actual_count}."
     return gm
 
 
@@ -330,6 +333,123 @@ class ActivationCheckpointingViaTagsTests(torch._dynamo.test_case.TestCase):
 
         body_function = getattr(cnt.graphs[0], wrap_node.args[0].name)
         self.assertEqual(op_count(body_function), 2)
+
+    @requires_cuda()
+    def test_tags_selective_checkpoint_gemm_only():
+        ops_to_checkpoint = [
+            torch.matmul,
+        ]
+
+        def context_fn_dynamo(unique_graph_id, gmod):
+            for node in gmod.graph.nodes:
+                if node.op == "call_function" and node.target in ops_to_checkpoint:
+                    node.meta["recompute"] = unique_graph_id
+
+        def gn(x, y):
+            return torch.sigmoid(torch.sigmoid(torch.matmul(x, y) * y))
+
+        def fn(x, y):
+            return torch.utils.checkpoint.checkpoint(
+                gn,
+                torch.sin(x),
+                y,
+                use_reentrant=False,
+                context_fn_dynamo=context_fn_dynamo,
+            )
+
+        x = torch.randn(4, 4, device="cuda", requires_grad=True)
+        y = torch.randn(4, 4, device="cuda", requires_grad=True)
+
+        fw_compiler = functools.partial(
+            count_ops,
+            freq=1,
+            op=torch.ops.aten.mm.default,
+        )
+        bw_compiler = functools.partial(
+            count_ops,
+            freq=3,
+            op=torch.ops.aten.mm.default,
+        )  # mm is recomputed in the bwd
+        backend = aot_autograd(fw_compiler=fw_compiler, bw_compiler=bw_compiler)
+        self._validate(fn, backend, x, y)
+
+    @requires_cuda()
+    def test_tags_selective_checkpoint_custom_rule():
+        def context_fn_dynamo(unique_graph_id, gmod):
+            op_count = 0
+            for node in gmod.graph.nodes:
+                if node.op == "call_function" and node.target == torch.matmul:
+                    op_count += 1
+                    if op_count == 2:  # Only checkpoint the second matmul
+                        node.meta["recompute"] = unique_graph_id
+
+        def gn(x, y):
+            return torch.sigmoid(torch.sigmoid(torch.matmul(torch.matmul(x, y), y)))
+
+        def fn(x, y):
+            return torch.utils.checkpoint.checkpoint(
+                gn,
+                torch.sin(x),
+                y,
+                use_reentrant=False,
+                context_fn_dynamo=context_fn_dynamo,
+            )
+
+        x = torch.randn(4, 4, device="cuda", requires_grad=True)
+        y = torch.randn(4, 4, device="cuda", requires_grad=True)
+
+        fw_compiler = functools.partial(
+            count_ops,
+            freq=2,
+            op=torch.ops.aten.mm.default,
+        )
+        bw_compiler = functools.partial(
+            count_ops,
+            freq=5,  # if both matmuls are recomputed, this would be 6 instead of 5
+            op=torch.ops.aten.mm.default,
+        )
+        backend = aot_autograd(fw_compiler=fw_compiler, bw_compiler=bw_compiler)
+        self._validate(fn, backend, x, y)
+
+    @requires_cuda()
+    def test_tags_selective_checkpoint_with_inplace_op():
+        ops_to_checkpoint = [
+            torch.selu_,
+        ]
+
+        def context_fn_dynamo(unique_graph_id, gmod):
+            for node in gmod.graph.nodes:
+                if node.op == "call_function" and node.target in ops_to_checkpoint:
+                    node.meta["recompute"] = unique_graph_id
+
+        def gn(x, y):
+            return torch.sigmoid(torch.selu_(torch.matmul(torch.matmul(x, y), y)))
+
+        def fn(x, y):
+            return torch.utils.checkpoint.checkpoint(
+                gn,
+                torch.sin(x),
+                y,
+                use_reentrant=False,
+                context_fn_dynamo=context_fn_dynamo,
+            )
+
+        x = torch.randn(4, 4, device="cuda", requires_grad=True)
+        y = torch.randn(4, 4, device="cuda", requires_grad=True)
+
+        fw_compiler = functools.partial(
+            count_ops,
+            freq=2,
+            op=torch.ops.aten.mm.default,
+        )
+        bw_compiler = functools.partial(
+            count_ops,
+            freq=4,
+            op=torch.ops.aten.mm.default,
+        )
+        backend = aot_autograd(fw_compiler=fw_compiler, bw_compiler=bw_compiler)
+        # Check that saving input of in-place op doesn't affect accuracy
+        self._validate(fn, backend, x, y)
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ AOT_PARTITIONER_DEBUG = config.debug_partitioner
 
 
 def must_recompute(node):
-    return node.meta.get("recompute", False)
+    return node.meta.get("recompute", 0) > 0
 
 def has_recomputable_ops(fx_g):
     found = False
@@ -657,7 +657,7 @@ def min_cut_rematerialization_partition(
     def classify_nodes(joint_module):
         required_bw_nodes = set()
         for node in joint_module.graph.nodes:
-            if node.op == 'placeholder' and "tangents" in node.target:
+            if (node.op == 'placeholder' and "tangents" in node.target) or must_recompute(node):
                 required_bw_nodes.add(node)
             if node in required_bw_nodes:
                 for user in node.users:

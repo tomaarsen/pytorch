@@ -893,6 +893,10 @@ class CheckpointHigherOrderVariable(WrapHigherOrderVariable):
         from torch._higher_order_ops.wrap import TagActivationCheckpoint
         from .builder import wrap_fx_proxy
 
+        if "context_fn_dynamo" in kwargs:
+            context_fn_dynamo = kwargs.pop("context_fn_dynamo")
+            self.value.context_fn_dynamo = context_fn_dynamo.fn
+
         checkpoint_kwargs, gmod_kwargs = TagActivationCheckpoint.divide_kwargs(kwargs)
 
         # Here we use checkpoint_kwargs (and not gmod kwargs). gmod_kwargs are
